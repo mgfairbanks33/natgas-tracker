@@ -4,13 +4,14 @@ Scraper module: EIA Form 860M, FERC interconnection queues, and news-based OEM/E
 import io
 import json
 import logging
+import math
 import re
 import time
 from datetime import datetime
 from typing import Optional
 
 import feedparser
-import pandas as pd
+import openpyxl
 import requests
 from sqlalchemy.orm import Session
 
@@ -131,6 +132,39 @@ HEADERS = {
 }
 
 # ---------------------------------------------------------------------------
+# Excel helpers (openpyxl-based, replaces pandas)
+# ---------------------------------------------------------------------------
+
+def _load_workbook(data: bytes):
+    return openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
+
+
+def _read_sheet_rows(wb, sheet_name: str, header_row: int = 0):
+    """Read an openpyxl sheet and return (list[dict], list[str]) — rows as dicts + headers."""
+    ws = wb[sheet_name]
+    all_rows = list(ws.iter_rows(values_only=True))
+    if header_row >= len(all_rows):
+        return [], []
+    headers = [str(c).strip() if c is not None else "" for c in all_rows[header_row]]
+    rows = []
+    for raw_row in all_rows[header_row + 1:]:
+        d = {}
+        for i, val in enumerate(raw_row):
+            if i < len(headers):
+                d[headers[i]] = val
+        rows.append(d)
+    return rows, headers
+
+
+def _safe_float(val) -> Optional[float]:
+    try:
+        f = float(val)
+        return None if (math.isnan(f) or math.isinf(f)) else f
+    except (TypeError, ValueError):
+        return None
+
+
+# ---------------------------------------------------------------------------
 # EIA Form 860M
 # ---------------------------------------------------------------------------
 
@@ -191,27 +225,32 @@ def scrape_eia(db: Session) -> int:
         return 0
 
     try:
-        xls = pd.ExcelFile(io.BytesIO(resp.content))
+        wb = _load_workbook(resp.content)
     except Exception as e:
         logger.error("Failed to parse EIA xlsx: %s", e)
         return 0
 
     # The sheet name varies — look for "Planned" or "Plant"
     sheet = None
-    for name in xls.sheet_names:
+    for name in wb.sheetnames:
         if "planned" in name.lower():
             sheet = name
             break
     if sheet is None:
-        logger.error("Could not find Planned sheet in EIA 860M. Sheets: %s", xls.sheet_names)
+        logger.error("Could not find Planned sheet in EIA 860M. Sheets: %s", wb.sheetnames)
+        wb.close()
         return 0
 
     # Auto-detect header row: scan rows 0-5, use first with >5 non-null, non-Unnamed cells
     header_row = 2  # default for current EIA 860M format (as of 2026)
     try:
-        for hr in range(0, 6):
-            df_probe = pd.read_excel(xls, sheet_name=sheet, header=hr, nrows=1)
-            named = [c for c in df_probe.columns if "Unnamed" not in str(c) and str(c) != "nan"]
+        ws_probe = wb[sheet]
+        all_rows = list(ws_probe.iter_rows(values_only=True))
+        for hr in range(0, min(6, len(all_rows))):
+            named = [
+                c for c in all_rows[hr]
+                if c is not None and "Unnamed" not in str(c) and str(c) != "nan"
+            ]
             if len(named) >= 5:
                 header_row = hr
                 break
@@ -219,18 +258,18 @@ def scrape_eia(db: Session) -> int:
         pass
 
     try:
-        df = pd.read_excel(xls, sheet_name=sheet, header=header_row)
+        wb.close()
+        wb = _load_workbook(resp.content)  # re-open since read_only workbooks are one-pass
+        rows, headers = _read_sheet_rows(wb, sheet, header_row)
+        wb.close()
     except Exception as e:
         logger.error("Failed to read EIA sheet: %s", e)
         return 0
 
-    # Normalize column names
-    df.columns = [str(c).strip() for c in df.columns]
-
     # Required column subsets (EIA sometimes renames columns)
-    col_map = _eia_column_map(df.columns)
+    col_map = _eia_column_map(headers)
     if col_map is None:
-        logger.error("Unexpected EIA column structure: %s", [str(c) for c in df.columns[:20]])
+        logger.error("Unexpected EIA column structure: %s", headers[:20])
         return 0
 
     # --- Pass 1: parse all rows into a dict keyed by plant_id (aggregate generators) ---
@@ -238,12 +277,12 @@ def scrape_eia(db: Session) -> int:
 
     STATUS_RANK = {"L": 5, "T": 4, "U": 3, "P": 2, "V": 1}  # higher = more advanced
 
-    for _, row in df.iterrows():
+    for row in rows:
         try:
-            energy_source = str(row.get(col_map["energy_source"], "")).strip().upper()
-            technology = str(row.get(col_map["technology"], "")).strip()
-            status_code = str(row.get(col_map["status"], "")).strip().upper()
-            raw_plant_id = str(row.get(col_map["plant_id"], "")).strip()
+            energy_source = str(row.get(col_map["energy_source"]) or "").strip().upper()
+            technology = str(row.get(col_map["technology"]) or "").strip()
+            status_code = str(row.get(col_map["status"]) or "").strip().upper()
+            raw_plant_id = str(row.get(col_map["plant_id"]) or "").strip()
 
             # Filter: must be gas fuel or gas technology keyword
             is_gas_fuel = any(energy_source.startswith(c) for c in EIA_GAS_FUEL_CODES)
@@ -260,12 +299,12 @@ def scrape_eia(db: Session) -> int:
             if capacity < 1:
                 continue
 
-            name = str(row.get(col_map["name"], "")).strip()
-            state = str(row.get(col_map["state"], "")).strip()
-            county = str(row.get(col_map.get("county", ""), "")).strip()
-            developer = str(row.get(col_map.get("developer", ""), "")).strip()
-            cod_mo = str(row.get(col_map.get("cod_month", ""), "")).strip()
-            cod_yr = str(row.get(col_map.get("cod_year", ""), "")).strip()
+            name = str(row.get(col_map["name"]) or "").strip()
+            state = str(row.get(col_map["state"]) or "").strip()
+            county = str(row.get(col_map.get("county", "")) or "").strip()
+            developer = str(row.get(col_map.get("developer", "")) or "").strip()
+            cod_mo = str(row.get(col_map.get("cod_month", "")) or "").strip()
+            cod_yr = str(row.get(col_map.get("cod_year", "")) or "").strip()
             cod = (
                 f"{cod_mo}/{cod_yr}"
                 if cod_mo and cod_yr and cod_mo != "nan" and cod_yr != "nan"
@@ -410,14 +449,6 @@ def _map_eia_status(code: str) -> str:
     return mapping.get(letter, code)
 
 
-def _safe_float(val) -> Optional[float]:
-    try:
-        f = float(val)
-        return f if not pd.isna(f) else None
-    except (TypeError, ValueError):
-        return None
-
-
 # ---------------------------------------------------------------------------
 # FERC / ISO Queue (PJM primary, others best-effort)
 # ---------------------------------------------------------------------------
@@ -435,13 +466,15 @@ def _scrape_pjm(db: Session) -> int:
     try:
         resp = requests.get(url, headers=HEADERS, timeout=120)
         resp.raise_for_status()
-        df = pd.read_excel(io.BytesIO(resp.content), header=0)
+        wb = _load_workbook(resp.content)
+        sheet = wb.sheetnames[0]
+        rows, headers = _read_sheet_rows(wb, sheet, header_row=0)
+        wb.close()
     except Exception as e:
         logger.warning("PJM queue fetch failed: %s", e)
         return 0
 
-    df.columns = [str(c).strip() for c in df.columns]
-    cols_lower = {c.lower(): c for c in df.columns}
+    cols_lower = {c.lower(): c for c in headers}
 
     def find(kws):
         for kw in kws:
@@ -460,13 +493,13 @@ def _scrape_pjm(db: Session) -> int:
     cod_col = find(["in service", "cod", "commercial"])
 
     count = 0
-    for _, row in df.iterrows():
+    for row in rows:
         try:
-            fuel = str(row.get(fuel_col, "")).upper()
+            fuel = str(row.get(fuel_col) or "").upper()
             if fuel_col and not any(g in fuel for g in ["GAS", "NG", "NATURAL"]):
                 continue
-            queue_id = str(row.get(queue_col, "")).strip() if queue_col else None
-            name = str(row.get(name_col, "")).strip() if name_col else None
+            queue_id = str(row.get(queue_col) or "").strip() if queue_col else None
+            name = str(row.get(name_col) or "").strip() if name_col else None
             if not name or name.lower() in ("nan", "none", ""):
                 continue
 
@@ -475,10 +508,10 @@ def _scrape_pjm(db: Session) -> int:
                 existing = db.query(Project).filter(Project.ferc_queue_id == queue_id).first()
 
             capacity = _safe_float(row.get(mw_col)) if mw_col else None
-            state = str(row.get(state_col, "")).strip() if state_col else ""
-            status = str(row.get(status_col, "")).strip() if status_col else ""
-            developer = str(row.get(dev_col, "")).strip() if dev_col else ""
-            cod = str(row.get(cod_col, "")).strip() if cod_col else ""
+            state = str(row.get(state_col) or "").strip() if state_col else ""
+            status = str(row.get(status_col) or "").strip() if status_col else ""
+            developer = str(row.get(dev_col) or "").strip() if dev_col else ""
+            cod = str(row.get(cod_col) or "").strip() if cod_col else ""
 
             if existing:
                 existing.ferc_queue_id = queue_id
