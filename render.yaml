@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: natgas-tracker
+    runtime: python
+    region: oregon
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: SENDGRID_API_KEY
+        sync: false
+      - key: EMAIL_TO
+        sync: false
+      - key: EMAIL_FROM
+        sync: false
+      - key: DB_PATH
+        value: /data/natgas.db
+    disk:
+      name: natgas-data
+      mountPath: /data
+      sizeGB: 1

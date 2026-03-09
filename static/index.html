@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>US Natural Gas Plant Tracker</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d2e;
+      --surface2: #22263a;
+      --border: #2a2e45;
+      --text: #e0e6f0;
+      --muted: #6b7280;
+      --accent: #f97316;
+      --accent2: #fb923c;
+      --blue: #38bdf8;
+      --purple: #a78bfa;
+      --green: #4ade80;
+      --red: #f87171;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+
+    header h1 {
+      font-size: 17px;
+      font-weight: 700;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .stat-pills {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      flex: 1;
+    }
+
+    .pill {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 4px 12px;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pill-val { font-weight: 700; color: var(--accent2); }
+
+    .btn {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      padding: 7px 14px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.15s;
+      white-space: nowrap;
+    }
+    .btn:hover { background: var(--accent2); }
+    .btn.secondary {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .btn.secondary:hover { border-color: var(--accent); color: var(--accent); }
+    .btn.danger { background: #7f1d1d; }
+    .btn.danger:hover { background: var(--red); }
+
+    /* ── Filter bar ── */
+    .filter-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 10px 24px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .filter-bar input,
+    .filter-bar select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      padding: 6px 10px;
+      font-size: 12px;
+      outline: none;
+    }
+
+    .filter-bar input { min-width: 200px; }
+    .filter-bar input::placeholder { color: var(--muted); }
+    .filter-bar input:focus,
+    .filter-bar select:focus { border-color: var(--accent); }
+
+    .filter-bar label { color: var(--muted); font-size: 12px; }
+
+    /* ── Table ── */
+    .table-wrap {
+      overflow-x: auto;
+      padding: 0 24px 80px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 16px;
+    }
+
+    thead th {
+      background: var(--surface);
+      color: var(--muted);
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+    thead th:hover { color: var(--accent); }
+    thead th.sorted-asc::after { content: ' ↑'; color: var(--accent); }
+    thead th.sorted-desc::after { content: ' ↓'; color: var(--accent); }
+
+    tbody tr {
+      border-bottom: 1px solid var(--border);
+      cursor: pointer;
+      transition: background 0.1s;
+    }
+    tbody tr:hover { background: var(--surface2); }
+
+    tbody td {
+      padding: 9px 12px;
+      white-space: nowrap;
+      max-width: 220px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 10px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge-construction { background: #7c3aed22; color: var(--purple); border: 1px solid #7c3aed44; }
+    .badge-planned { background: #0369a122; color: var(--blue); border: 1px solid #0369a144; }
+    .badge-other { background: #374151; color: var(--muted); }
+    .badge-eia { background: #166534; color: var(--green); font-size: 10px; padding: 1px 6px; }
+    .badge-ferc { background: #1d4ed844; color: var(--blue); font-size: 10px; padding: 1px 6px; }
+    .badge-manual { background: #78350f44; color: #fbbf24; font-size: 10px; padding: 1px 6px; }
+
+    .na { color: var(--muted); font-style: italic; }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      padding: 60px 20px;
+      color: var(--muted);
+    }
+    .empty h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
+
+    /* ── Modal ── */
+    .modal-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      background: rgba(0,0,0,0.65);
+      z-index: 100;
+      align-items: flex-start;
+      justify-content: center;
+      padding: 40px 16px;
+      overflow-y: auto;
+    }
+    .modal-overlay.open { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      width: 100%;
+      max-width: 700px;
+      padding: 28px;
+      position: relative;
+    }
+
+    .modal h2 {
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--accent);
+      margin-bottom: 20px;
+    }
+
+    .modal-close {
+      position: absolute;
+      top: 16px;
+      right: 20px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      font-size: 20px;
+      cursor: pointer;
+      line-height: 1;
+    }
+    .modal-close:hover { color: var(--text); }
+
+    .field-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field.full { grid-column: 1 / -1; }
+    .field label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+    .field-val { color: var(--text); font-size: 13px; }
+
+    .editable-field input,
+    .editable-field textarea,
+    .editable-field select {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text);
+      padding: 6px 10px;
+      font-size: 13px;
+      width: 100%;
+      outline: none;
+      font-family: inherit;
+    }
+    .editable-field input:focus,
+    .editable-field textarea:focus,
+    .editable-field select:focus { border-color: var(--accent); }
+    .editable-field textarea { resize: vertical; min-height: 70px; }
+
+    .news-links { display: flex; flex-direction: column; gap: 6px; margin-top: 4px; }
+    .news-links a { color: var(--blue); text-decoration: none; font-size: 12px; word-break: break-all; }
+    .news-links a:hover { text-decoration: underline; }
+
+    .modal-actions {
+      display: flex;
+      gap: 10px;
+      margin-top: 20px;
+      justify-content: flex-end;
+      border-top: 1px solid var(--border);
+      padding-top: 16px;
+    }
+
+    /* ── Add project form ── */
+    #add-form .field-grid { margin-bottom: 0; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--accent);
+      border-radius: 8px;
+      padding: 12px 18px;
+      font-size: 13px;
+      z-index: 200;
+      opacity: 0;
+      transform: translateY(10px);
+      transition: opacity 0.25s, transform 0.25s;
+      max-width: 320px;
+    }
+    .toast.show { opacity: 1; transform: translateY(0); }
+    .toast.error { border-left-color: var(--red); }
+    .toast.success { border-left-color: var(--green); }
+
+    /* ── Loading spinner ── */
+    .spinner {
+      display: inline-block;
+      width: 16px; height: 16px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      vertical-align: middle;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .scrape-status { font-size: 12px; color: var(--muted); }
+  </style>
+</head>
+<body>
+
+<!-- Header -->
+<header>
+  <h1>⚡ US Natural Gas Tracker</h1>
+  <div class="stat-pills" id="stat-pills">
+    <div class="pill">Loading stats… <span class="spinner"></span></div>
+  </div>
+  <button class="btn secondary" onclick="openAddModal()">+ Add Project</button>
+  <button class="btn" id="scrape-btn" onclick="triggerScrape()">Scrape Now</button>
+  <span class="scrape-status" id="scrape-status"></span>
+</header>
+
+<!-- Filter bar -->
+<div class="filter-bar">
+  <label>Search</label>
+  <input type="text" id="search-input" placeholder="Plant name, developer, OEM…" oninput="debouncedLoad()" />
+  <label>State</label>
+  <select id="state-filter" onchange="loadProjects()">
+    <option value="">All States</option>
+  </select>
+  <label>Status</label>
+  <select id="status-filter" onchange="loadProjects()">
+    <option value="">All Statuses</option>
+    <option>Planned</option>
+    <option>Planned (&gt;20 years)</option>
+    <option>Under Construction</option>
+    <option>Under Construction &lt;50%</option>
+    <option>Under Construction &gt;50%</option>
+  </select>
+  <button class="btn secondary" onclick="clearFilters()">Clear</button>
+</div>
+
+<!-- Table -->
+<div class="table-wrap">
+  <table id="projects-table">
+    <thead>
+      <tr>
+        <th onclick="sortBy('name')">Plant Name</th>
+        <th onclick="sortBy('state')">State</th>
+        <th onclick="sortBy('county')">County</th>
+        <th onclick="sortBy('capacity_mw')">MW</th>
+        <th onclick="sortBy('technology')">Technology</th>
+        <th onclick="sortBy('developer')">Developer</th>
+        <th onclick="sortBy('oem')">OEM</th>
+        <th onclick="sortBy('epc')">EPC</th>
+        <th onclick="sortBy('status')">Status</th>
+        <th onclick="sortBy('proposed_cod')">COD</th>
+        <th>Source</th>
+        <th>$/kW (EIA Ref)</th>
+      </tr>
+    </thead>
+    <tbody id="table-body">
+      <tr><td colspan="12" class="empty"><span class="spinner"></span> Loading…</td></tr>
+    </tbody>
+  </table>
+  <div id="row-count" style="color:var(--muted);font-size:12px;margin-top:10px;"></div>
+</div>
+
+<!-- Detail / Edit Modal -->
+<div class="modal-overlay" id="detail-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('detail-modal')">&times;</button>
+    <h2 id="modal-title">Project Detail</h2>
+    <div id="modal-body"></div>
+    <div class="modal-actions">
+      <button class="btn danger" id="delete-btn" onclick="deleteProject()">Delete</button>
+      <button class="btn secondary" onclick="closeModal('detail-modal')">Close</button>
+      <button class="btn" onclick="saveProject()">Save Changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- Add Project Modal -->
+<div class="modal-overlay" id="add-modal">
+  <div class="modal">
+    <button class="modal-close" onclick="closeModal('add-modal')">&times;</button>
+    <h2>Add Project</h2>
+    <form id="add-form" onsubmit="submitAddForm(event)">
+      <div class="field-grid">
+        <div class="field editable-field full">
+          <label>Plant Name *</label>
+          <input type="text" name="name" required />
+        </div>
+        <div class="field editable-field">
+          <label>State</label>
+          <input type="text" name="state" maxlength="2" placeholder="e.g. TX" />
+        </div>
+        <div class="field editable-field">
+          <label>County</label>
+          <input type="text" name="county" />
+        </div>
+        <div class="field editable-field">
+          <label>Capacity (MW)</label>
+          <input type="number" name="capacity_mw" step="0.1" min="0" />
+        </div>
+        <div class="field editable-field">
+          <label>Technology</label>
+          <select name="technology">
+            <option value="">— Select —</option>
+            <option>Combined Cycle</option>
+            <option>Combustion Turbine</option>
+            <option>Internal Combustion</option>
+            <option>Steam Turbine</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div class="field editable-field">
+          <label>Developer</label>
+          <input type="text" name="developer" />
+        </div>
+        <div class="field editable-field">
+          <label>OEM</label>
+          <input type="text" name="oem" />
+        </div>
+        <div class="field editable-field">
+          <label>EPC Contractor</label>
+          <input type="text" name="epc" />
+        </div>
+        <div class="field editable-field">
+          <label>Status</label>
+          <select name="status">
+            <option>Planned</option>
+            <option>Under Construction &lt;50%</option>
+            <option>Under Construction &gt;50%</option>
+            <option>Under Construction</option>
+            <option>Planned (&gt;20 years)</option>
+          </select>
+        </div>
+        <div class="field editable-field">
+          <label>Proposed COD</label>
+          <input type="text" name="proposed_cod" placeholder="e.g. 2026 Q2" />
+        </div>
+        <div class="field editable-field full">
+          <label>Notes</label>
+          <textarea name="notes" rows="3"></textarea>
+        </div>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn secondary" onclick="closeModal('add-modal')">Cancel</button>
+        <button type="submit" class="btn">Add Project</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Toast -->
+<div class="toast" id="toast"></div>
+
+<script>
+  // ── State ──
+  let projects = [];
+  let currentProject = null;
+  let sortField = 'capacity_mw';
+  let sortDir = -1; // -1 = desc, 1 = asc
+  let debounceTimer = null;
+
+  // ── Init ──
+  document.addEventListener('DOMContentLoaded', () => {
+    loadStats();
+    loadProjects();
+    populateStateDropdown();
+  });
+
+  // ── Stats ──
+  async function loadStats() {
+    try {
+      const r = await fetch('/api/stats');
+      const d = await r.json();
+      document.getElementById('stat-pills').innerHTML = `
+        <div class="pill">Total <span class="pill-val">${d.total_projects.toLocaleString()}</span></div>
+        <div class="pill">Under Construction <span class="pill-val">${d.under_construction.toLocaleString()}</span></div>
+        <div class="pill">Planned <span class="pill-val">${d.planned.toLocaleString()}</span></div>
+        <div class="pill">Total MW <span class="pill-val">${(d.total_mw || 0).toLocaleString()}</span></div>
+        <div class="pill">Missing OEM <span class="pill-val">${d.missing_oem.toLocaleString()}</span></div>
+        <div class="pill">Missing EPC <span class="pill-val">${d.missing_epc.toLocaleString()}</span></div>
+      `;
+    } catch (e) {
+      console.error('Stats error', e);
+    }
+  }
+
+  // ── Projects list ──
+  async function loadProjects() {
+    const search = document.getElementById('search-input').value.trim();
+    const state = document.getElementById('state-filter').value;
+    const status = document.getElementById('status-filter').value;
+
+    const params = new URLSearchParams({ limit: 1000 });
+    if (search) params.set('search', search);
+    if (state) params.set('state', state);
+    if (status) params.set('status', status);
+
+    try {
+      const r = await fetch('/api/projects?' + params);
+      const d = await r.json();
+      projects = d.projects || [];
+      renderTable();
+      document.getElementById('row-count').textContent =
+        `Showing ${projects.length} of ${d.total} projects`;
+    } catch (e) {
+      document.getElementById('table-body').innerHTML =
+        '<tr><td colspan="12" class="empty">Failed to load projects.</td></tr>';
+    }
+  }
+
+  function debouncedLoad() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(loadProjects, 300);
+  }
+
+  function clearFilters() {
+    document.getElementById('search-input').value = '';
+    document.getElementById('state-filter').value = '';
+    document.getElementById('status-filter').value = '';
+    loadProjects();
+  }
+
+  // ── Sorting ──
+  function sortBy(field) {
+    if (sortField === field) sortDir *= -1;
+    else { sortField = field; sortDir = field === 'capacity_mw' ? -1 : 1; }
+    // Update header classes
+    document.querySelectorAll('thead th').forEach(th => {
+      th.classList.remove('sorted-asc', 'sorted-desc');
+    });
+    const headers = ['name','state','county','capacity_mw','technology','developer','oem','epc','status','proposed_cod','source','cost_per_kw'];
+    const idx = headers.indexOf(field);
+    if (idx >= 0) {
+      const ths = document.querySelectorAll('thead th');
+      ths[idx].classList.add(sortDir === 1 ? 'sorted-asc' : 'sorted-desc');
+    }
+    renderTable();
+  }
+
+  function renderTable() {
+    const sorted = [...projects].sort((a, b) => {
+      let av = a[sortField], bv = b[sortField];
+      if (av == null) av = sortDir === 1 ? '\uffff' : '';
+      if (bv == null) bv = sortDir === 1 ? '\uffff' : '';
+      if (typeof av === 'number') return (av - bv) * sortDir;
+      return String(av).localeCompare(String(bv)) * sortDir;
+    });
+
+    if (!sorted.length) {
+      document.getElementById('table-body').innerHTML =
+        '<tr><td colspan="12"><div class="empty"><h3>No projects found</h3><p>Try adjusting filters or trigger a scrape.</p></div></td></tr>';
+      return;
+    }
+
+    const rows = sorted.map(p => `
+      <tr onclick="openDetail(${p.id})">
+        <td title="${esc(p.name)}">${esc(p.name) || '<span class="na">—</span>'}</td>
+        <td>${esc(p.state) || '<span class="na">—</span>'}</td>
+        <td>${esc(p.county) || '<span class="na">—</span>'}</td>
+        <td>${p.capacity_mw ? p.capacity_mw.toLocaleString() : '<span class="na">—</span>'}</td>
+        <td title="${esc(p.technology)}">${esc(p.technology) || '<span class="na">—</span>'}</td>
+        <td title="${esc(p.developer)}">${esc(p.developer) || '<span class="na">—</span>'}</td>
+        <td title="${esc(p.oem)}">${esc(p.oem) || '<span class="na">—</span>'}</td>
+        <td title="${esc(p.epc)}">${esc(p.epc) || '<span class="na">—</span>'}</td>
+        <td>${statusBadge(p.status)}</td>
+        <td>${esc(p.proposed_cod) || '<span class="na">—</span>'}</td>
+        <td>${sourceBadge(p.source)}</td>
+        <td>${costPerKwCell(p)}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('table-body').innerHTML = rows;
+  }
+
+  function costPerKwCell(p) {
+    if (!p.cost_per_kw) return '<span class="na">—</span>';
+    const label = '$' + p.cost_per_kw.toLocaleString(undefined, {maximumFractionDigits: 0}) + '/kW';
+    if (p.cost_source_url) {
+      return `<a href="${esc(p.cost_source_url)}" target="_blank" rel="noopener"
+        title="Reported cost per kW — click to view source"
+        style="color:var(--blue);text-decoration:none;font-size:12px;"
+        onclick="event.stopPropagation()">${label}</a>`;
+    }
+    return `<span style="font-size:12px;">${label}</span>`;
+  }
+
+  function statusBadge(s) {
+    if (!s) return '<span class="na">—</span>';
+    const cls = s.toLowerCase().includes('construction') ? 'construction' : 'planned';
+    return `<span class="badge badge-${cls}">${esc(s)}</span>`;
+  }
+
+  function sourceBadge(s) {
+    const m = { EIA: 'eia', FERC: 'ferc', Manual: 'manual' };
+    const cls = m[s] || 'manual';
+    return `<span class="badge badge-${cls}">${esc(s || 'Manual')}</span>`;
+  }
+
+  // ── Detail modal ──
+  async function openDetail(id) {
+    try {
+      const r = await fetch(`/api/projects/${id}`);
+      if (!r.ok) throw new Error('Not found');
+      currentProject = await r.json();
+      renderDetailModal(currentProject);
+      document.getElementById('detail-modal').classList.add('open');
+    } catch (e) {
+      showToast('Failed to load project.', 'error');
+    }
+  }
+
+  function renderDetailModal(p) {
+    document.getElementById('modal-title').textContent = p.name || 'Project Detail';
+    document.getElementById('delete-btn').setAttribute('data-id', p.id);
+
+    const newsHtml = (p.news_links || []).length
+      ? `<div class="news-links">${p.news_links.map(u =>
+          `<a href="${esc(u)}" target="_blank" rel="noopener">${esc(u)}</a>`
+        ).join('')}</div>`
+      : '<span class="na">No news links</span>';
+
+    document.getElementById('modal-body').innerHTML = `
+      <div class="field-grid">
+        ${readonlyField('EIA Plant ID', p.eia_plant_id)}
+        ${readonlyField('FERC Queue ID', p.ferc_queue_id)}
+        ${readonlyField('State', p.state)}
+        ${readonlyField('County', p.county)}
+        ${readonlyField('Capacity (MW)', p.capacity_mw ? p.capacity_mw.toLocaleString() : null)}
+        ${readonlyField('Technology', p.technology)}
+        ${readonlyField('Fuel Type', p.fuel_type)}
+        ${readonlyField('Status', p.status)}
+        ${readonlyField('Proposed COD', p.proposed_cod)}
+        ${readonlyField('Source', p.source)}
+        ${editableField('developer', 'Developer', p.developer)}
+        ${editableField('oem', 'OEM (Turbine Manufacturer)', p.oem)}
+        ${editableField('epc', 'EPC Contractor', p.epc)}
+        <div class="field full">
+          <label>Notes</label>
+          <div class="editable-field">
+            <textarea id="edit-notes" rows="3">${esc(p.notes || '')}</textarea>
+          </div>
+        </div>
+        <div class="field full">
+          <label>News Links</label>
+          ${newsHtml}
+        </div>
+        <div class="field" style="color:var(--muted);font-size:11px;">
+          Created: ${p.created_at ? new Date(p.created_at).toLocaleString() : '—'}
+        </div>
+        <div class="field" style="color:var(--muted);font-size:11px;">
+          Updated: ${p.last_updated ? new Date(p.last_updated).toLocaleString() : '—'}
+        </div>
+      </div>
+    `;
+  }
+
+  function readonlyField(label, value) {
+    return `
+      <div class="field">
+        <label>${label}</label>
+        <div class="field-val">${value != null && value !== '' ? esc(String(value)) : '<span class="na">—</span>'}</div>
+      </div>`;
+  }
+
+  function editableField(id, label, value) {
+    return `
+      <div class="field editable-field">
+        <label>${label}</label>
+        <input type="text" id="edit-${id}" value="${esc(value || '')}" />
+      </div>`;
+  }
+
+  async function saveProject() {
+    if (!currentProject) return;
+    const updates = {
+      developer: document.getElementById('edit-developer')?.value || null,
+      oem: document.getElementById('edit-oem')?.value || null,
+      epc: document.getElementById('edit-epc')?.value || null,
+      notes: document.getElementById('edit-notes')?.value || null,
+    };
+    try {
+      const r = await fetch(`/api/projects/${currentProject.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      if (!r.ok) throw new Error('Save failed');
+      showToast('Project saved.', 'success');
+      closeModal('detail-modal');
+      loadProjects();
+      loadStats();
+    } catch (e) {
+      showToast('Save failed.', 'error');
+    }
+  }
+
+  async function deleteProject() {
+    if (!currentProject) return;
+    if (!confirm(`Delete "${currentProject.name}"? This cannot be undone.`)) return;
+    try {
+      const r = await fetch(`/api/projects/${currentProject.id}`, { method: 'DELETE' });
+      if (!r.ok) throw new Error('Delete failed');
+      showToast('Project deleted.', 'success');
+      closeModal('detail-modal');
+      loadProjects();
+      loadStats();
+    } catch (e) {
+      showToast('Delete failed.', 'error');
+    }
+  }
+
+  // ── Add modal ──
+  function openAddModal() {
+    document.getElementById('add-form').reset();
+    document.getElementById('add-modal').classList.add('open');
+  }
+
+  async function submitAddForm(e) {
+    e.preventDefault();
+    const form = e.target;
+    const data = {};
+    new FormData(form).forEach((v, k) => { if (v) data[k] = v; });
+    if (data.capacity_mw) data.capacity_mw = parseFloat(data.capacity_mw);
+    try {
+      const r = await fetch('/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!r.ok) throw new Error('Add failed');
+      showToast('Project added.', 'success');
+      closeModal('add-modal');
+      loadProjects();
+      loadStats();
+    } catch (e) {
+      showToast('Failed to add project.', 'error');
+    }
+  }
+
+  // ── Scrape ──
+  async function triggerScrape() {
+    const btn = document.getElementById('scrape-btn');
+    const status = document.getElementById('scrape-status');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> Scraping…';
+    status.textContent = '';
+    try {
+      const r = await fetch('/api/scrape', { method: 'POST' });
+      const d = await r.json();
+      status.textContent = `EIA: ${d.result?.eia ?? 0} · FERC: ${d.result?.ferc ?? 0} records`;
+      showToast('Scrape complete!', 'success');
+      loadProjects();
+      loadStats();
+    } catch (e) {
+      status.textContent = 'Scrape failed.';
+      showToast('Scrape failed.', 'error');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Scrape Now';
+    }
+  }
+
+  // ── State dropdown ──
+  async function populateStateDropdown() {
+    const US_STATES = [
+      'AL','AK','AZ','AR','CA','CO','CT','DE','FL','GA','HI','ID','IL','IN','IA',
+      'KS','KY','LA','ME','MD','MA','MI','MN','MS','MO','MT','NE','NV','NH','NJ',
+      'NM','NY','NC','ND','OH','OK','OR','PA','RI','SC','SD','TN','TX','UT','VT',
+      'VA','WA','WV','WI','WY'
+    ];
+    const sel = document.getElementById('state-filter');
+    US_STATES.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s; opt.textContent = s;
+      sel.appendChild(opt);
+    });
+  }
+
+  // ── Helpers ──
+  function closeModal(id) {
+    document.getElementById(id).classList.remove('open');
+    currentProject = null;
+  }
+
+  document.querySelectorAll('.modal-overlay').forEach(el => {
+    el.addEventListener('click', e => {
+      if (e.target === el) el.classList.remove('open');
+    });
+  });
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function showToast(msg, type = '') {
+    const t = document.getElementById('toast');
+    t.textContent = msg;
+    t.className = `toast ${type} show`;
+    clearTimeout(t._timer);
+    t._timer = setTimeout(() => t.classList.remove('show'), 3500);
+  }
+</script>
+</body>
+</html>
