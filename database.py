@@ -3,10 +3,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
 
-DB_PATH = os.environ.get("DB_PATH", "natgas.db")
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+DATABASE_URL = os.environ.get("DATABASE_URL", "sqlite:///natgas.db")
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+# Render (and some other hosts) provide postgres:// but SQLAlchemy needs postgresql://
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+connect_args = {"check_same_thread": False} if DATABASE_URL.startswith("sqlite") else {}
+
+engine = create_engine(DATABASE_URL, connect_args=connect_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
@@ -20,28 +25,5 @@ def get_db():
 
 
 def init_db():
-    import sqlite3
-    import logging
-    logger = logging.getLogger(__name__)
-
     from models import Project  # noqa: F401 — registers model with Base
     Base.metadata.create_all(bind=engine)
-
-    # Add any new columns to the existing table (SQLite doesn't support ALTER TABLE … ADD COLUMN IF NOT EXISTS)
-    new_cols = [
-        ("cost_per_kw", "REAL"),
-        ("cost_source_url", "VARCHAR"),
-    ]
-    try:
-        conn = sqlite3.connect(DB_PATH)
-        cur = conn.cursor()
-        cur.execute("PRAGMA table_info(projects)")
-        existing = {row[1] for row in cur.fetchall()}
-        for col_name, col_type in new_cols:
-            if col_name not in existing:
-                cur.execute(f"ALTER TABLE projects ADD COLUMN {col_name} {col_type}")
-                logger.info("Migrated: added column %s to projects", col_name)
-        conn.commit()
-        conn.close()
-    except Exception as e:
-        logger.warning("DB migration check failed: %s", e)
